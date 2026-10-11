@@ -4,92 +4,79 @@
 #include <algorithm>
 #include <fstream>
 #include <sstream>
-#include <unordered_map>
+#include <map>
 #include <set>
-#include <filesystem>
+#include <unordered_map>
 
-const std::string INDEX_FILE = "index.dat";
+const std::string DATA_FILE = "data.idx";
 
-// Structure to store index-value pairs
-struct Record {
-    std::string index;
-    int value;
-    
-    bool operator<(const Record& other) const {
-        if (index != other.index) return index < other.index;
-        return value < other.value;
-    }
-    
-    bool operator==(const Record& other) const {
-        return index == other.index && value == other.value;
-    }
-};
-
+// Simple database class that directly reads/writes to file for each operation
 class FileStorageDB {
 private:
-    // In-memory index mapping index string to sorted values
-    std::unordered_map<std::string, std::set<int>> index_map;
+    // Cache for recently accessed data to improve performance
+    std::unordered_map<std::string, std::set<int>> cache;
     
-    // Load index from file
-    void loadIndex() {
-        std::ifstream indexFile(INDEX_FILE, std::ios::binary);
-        if (!indexFile) return; // File doesn't exist yet
+    // Read all data from file
+    void readAll() {
+        std::ifstream file(DATA_FILE);
+        if (!file) return; // File doesn't exist yet
         
+        cache.clear();
         std::string line;
-        while (std::getline(indexFile, line)) {
+        while (std::getline(file, line)) {
             if (line.empty()) continue;
             
-            std::istringstream iss(line);
-            std::string index;
-            int value;
-            char delimiter;
-            
-            if (iss >> index >> delimiter >> value && delimiter == ':') {
-                index_map[index].insert(value);
+            // Parse line: index:value
+            size_t pos = line.find(':');
+            if (pos != std::string::npos) {
+                std::string index = line.substr(0, pos);
+                int value = std::stoi(line.substr(pos + 1));
+                cache[index].insert(value);
             }
         }
-        indexFile.close();
+        file.close();
     }
     
-    // Save index to file
-    void saveIndex() {
-        std::ofstream indexFile(INDEX_FILE, std::ios::binary | std::ios::trunc);
-        for (const auto& pair : index_map) {
+    // Write all data to file
+    void writeAll() {
+        std::ofstream file(DATA_FILE);
+        for (const auto& pair : cache) {
             const std::string& index = pair.first;
             for (int value : pair.second) {
-                indexFile << index << ":" << value << "\n";
+                file << index << ":" << value << "\n";
             }
         }
-        indexFile.close();
+        file.close();
     }
     
 public:
     FileStorageDB() {
-        loadIndex();
-    }
-    
-    ~FileStorageDB() {
-        saveIndex();
+        readAll();
     }
     
     void insert(const std::string& index, int value) {
-        index_map[index].insert(value);
+        cache[index].insert(value);
+        writeAll(); // Write immediately to ensure persistence
     }
     
     void remove(const std::string& index, int value) {
-        auto it = index_map.find(index);
-        if (it != index_map.end()) {
+        auto it = cache.find(index);
+        if (it != cache.end()) {
             it->second.erase(value);
             if (it->second.empty()) {
-                index_map.erase(it);
+                cache.erase(it);
             }
+            writeAll(); // Write immediately to ensure persistence
+        } else {
+            // Still need to write to ensure file is up to date
+            writeAll();
         }
     }
     
     std::vector<int> find(const std::string& index) {
+        auto it = cache.find(index);
         std::vector<int> result;
-        auto it = index_map.find(index);
-        if (it != index_map.end()) {
+        if (it != cache.end()) {
             result.assign(it->second.begin(), it->second.end());
         }
         return result;
