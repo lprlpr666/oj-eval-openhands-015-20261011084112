@@ -4,24 +4,23 @@
 #include <algorithm>
 #include <fstream>
 #include <sstream>
-#include <map>
-#include <set>
 #include <unordered_map>
+#include <set>
+#include <map>
 
 const std::string DATA_FILE = "data.idx";
 
-// Simple database class that directly reads/writes to file for each operation
+// Database class that uses in-memory index with incremental file updates
 class FileStorageDB {
 private:
-    // Cache for recently accessed data to improve performance
-    std::unordered_map<std::string, std::set<int>> cache;
+    // In-memory index for fast access
+    std::map<std::string, std::set<int>> index;
     
-    // Read all data from file
-    void readAll() {
+    // Load index from file at startup
+    void load() {
         std::ifstream file(DATA_FILE);
         if (!file) return; // File doesn't exist yet
         
-        cache.clear();
         std::string line;
         while (std::getline(file, line)) {
             if (line.empty()) continue;
@@ -29,21 +28,28 @@ private:
             // Parse line: index:value
             size_t pos = line.find(':');
             if (pos != std::string::npos) {
-                std::string index = line.substr(0, pos);
+                std::string idx = line.substr(0, pos);
                 int value = std::stoi(line.substr(pos + 1));
-                cache[index].insert(value);
+                index[idx].insert(value);
             }
         }
         file.close();
     }
     
-    // Write all data to file
-    void writeAll() {
+    // Append a single record to file
+    void appendToFile(const std::string& index, int value) {
+        std::ofstream file(DATA_FILE, std::ios::app);
+        file << index << ":" << value << "\n";
+        file.close();
+    }
+    
+    // Rewrite entire file (used when deleting)
+    void rewriteFile() {
         std::ofstream file(DATA_FILE);
-        for (const auto& pair : cache) {
-            const std::string& index = pair.first;
+        for (const auto& pair : index) {
+            const std::string& idx = pair.first;
             for (int value : pair.second) {
-                file << index << ":" << value << "\n";
+                file << idx << ":" << value << "\n";
             }
         }
         file.close();
@@ -51,32 +57,39 @@ private:
     
 public:
     FileStorageDB() {
-        readAll();
+        load();
     }
     
-    void insert(const std::string& index, int value) {
-        cache[index].insert(value);
-        writeAll(); // Write immediately to ensure persistence
+    void insert(const std::string& idx, int value) {
+        // Check if this exact (index, value) pair already exists
+        if (index.find(idx) != index.end() && index[idx].find(value) != index[idx].end()) {
+            return; // Already exists, do nothing
+        }
+        
+        // Add to in-memory index
+        index[idx].insert(value);
+        
+        // Append to file
+        appendToFile(idx, value);
     }
     
-    void remove(const std::string& index, int value) {
-        auto it = cache.find(index);
-        if (it != cache.end()) {
+    void remove(const std::string& idx, int value) {
+        auto it = index.find(idx);
+        if (it != index.end()) {
             it->second.erase(value);
             if (it->second.empty()) {
-                cache.erase(it);
+                index.erase(it);
             }
-            writeAll(); // Write immediately to ensure persistence
-        } else {
-            // Still need to write to ensure file is up to date
-            writeAll();
+            
+            // Rewrite entire file with current state
+            rewriteFile();
         }
     }
     
-    std::vector<int> find(const std::string& index) {
-        auto it = cache.find(index);
+    std::vector<int> find(const std::string& idx) {
         std::vector<int> result;
-        if (it != cache.end()) {
+        auto it = index.find(idx);
+        if (it != index.end()) {
             result.assign(it->second.begin(), it->second.end());
         }
         return result;
