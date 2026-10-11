@@ -1,13 +1,14 @@
 #include <iostream>
 #include <string>
-#include <map>
-#include <set>
 #include <vector>
 #include <algorithm>
 #include <fstream>
 #include <sstream>
+#include <unordered_map>
+#include <set>
+#include <filesystem>
 
-const std::string DATA_FILE = "database.dat";
+const std::string INDEX_FILE = "index.dat";
 
 // Structure to store index-value pairs
 struct Record {
@@ -18,19 +19,24 @@ struct Record {
         if (index != other.index) return index < other.index;
         return value < other.value;
     }
+    
+    bool operator==(const Record& other) const {
+        return index == other.index && value == other.value;
+    }
 };
 
 class FileStorageDB {
 private:
-    std::map<std::string, std::set<int>> data;
+    // In-memory index mapping index string to sorted values
+    std::unordered_map<std::string, std::set<int>> index_map;
     
-public:
-    void load() {
-        std::ifstream file(DATA_FILE, std::ios::binary);
-        if (!file) return; // File doesn't exist yet
+    // Load index from file
+    void loadIndex() {
+        std::ifstream indexFile(INDEX_FILE, std::ios::binary);
+        if (!indexFile) return; // File doesn't exist yet
         
         std::string line;
-        while (std::getline(file, line)) {
+        while (std::getline(indexFile, line)) {
             if (line.empty()) continue;
             
             std::istringstream iss(line);
@@ -39,41 +45,51 @@ public:
             char delimiter;
             
             if (iss >> index >> delimiter >> value && delimiter == ':') {
-                data[index].insert(value);
+                index_map[index].insert(value);
             }
         }
-        file.close();
+        indexFile.close();
     }
     
-    void save() {
-        std::ofstream file(DATA_FILE, std::ios::binary | std::ios::trunc);
-        for (const auto& pair : data) {
+    // Save index to file
+    void saveIndex() {
+        std::ofstream indexFile(INDEX_FILE, std::ios::binary | std::ios::trunc);
+        for (const auto& pair : index_map) {
             const std::string& index = pair.first;
             for (int value : pair.second) {
-                file << index << ":" << value << "\n";
+                indexFile << index << ":" << value << "\n";
             }
         }
-        file.close();
+        indexFile.close();
+    }
+    
+public:
+    FileStorageDB() {
+        loadIndex();
+    }
+    
+    ~FileStorageDB() {
+        saveIndex();
     }
     
     void insert(const std::string& index, int value) {
-        data[index].insert(value);
+        index_map[index].insert(value);
     }
     
     void remove(const std::string& index, int value) {
-        auto it = data.find(index);
-        if (it != data.end()) {
+        auto it = index_map.find(index);
+        if (it != index_map.end()) {
             it->second.erase(value);
             if (it->second.empty()) {
-                data.erase(it);
+                index_map.erase(it);
             }
         }
     }
     
     std::vector<int> find(const std::string& index) {
         std::vector<int> result;
-        auto it = data.find(index);
-        if (it != data.end()) {
+        auto it = index_map.find(index);
+        if (it != index_map.end()) {
             result.assign(it->second.begin(), it->second.end());
         }
         return result;
@@ -82,7 +98,6 @@ public:
 
 int main() {
     FileStorageDB db;
-    db.load();
     
     int n;
     std::cin >> n;
@@ -123,6 +138,5 @@ int main() {
         }
     }
     
-    db.save();
     return 0;
 }
